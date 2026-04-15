@@ -1,0 +1,15 @@
+# GW IT Dashboard — FastAPI backend dependencies
+fastapi>=0.115.0
+uvicorn[standard]>=0.29.0
+pydantic>=2.7.0
+pydantic-settings>=2.3.0
+
+# Database
+sqlalchemy>=2.0.0
+psycopg2-binary>=2.9.9
+pgvector>=0.3.0
+pandas>=2.2.0
+python-dotenv>=1.0.0
+
+# AI / Azure OpenAI
+openai>=1.30.0
