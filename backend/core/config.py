@@ -31,8 +31,8 @@ class Settings(BaseSettings):
     )
 
     model_config = SettingsConfigDict(
-        # Look for .env in app_gw-it/ (two levels up from this file)
-        env_file=str(Path(__file__).resolve().parents[2].parent / "app_gw-it" / ".env"),
+        # .env lives at the repo root (two levels up from backend/core/config.py)
+        env_file=str(Path(__file__).resolve().parents[2] / ".env"),
         env_file_encoding="utf-8",
         extra="ignore",
     )
