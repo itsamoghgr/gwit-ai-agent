@@ -6,6 +6,8 @@ import StatCard from "@/components/StatCard";
 import { FileText, ChevronDown, ChevronRight, ShieldCheck, AlertTriangle } from "lucide-react";
 import type { KBArticle } from "@/lib/types";
 
+const HIDDEN_CLUSTER_IDS = new Set<number>([112, 170]);
+
 function parseList(raw: string[] | string | null | undefined): string[] {
   if (!raw) return [];
   // Backend now returns string[] directly — fast path.
@@ -75,7 +77,7 @@ export default function KBArticlesPage() {
     );
   }
 
-  const articles = data?.articles ?? [];
+  const articles = (data?.articles ?? []).filter(a => !HIDDEN_CLUSTER_IDS.has(a.cluster_id));
   const stats    = data?.stats;
   const shown    = search.trim()
     ? articles.filter(a =>

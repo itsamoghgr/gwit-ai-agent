@@ -26,6 +26,8 @@ const SOURCE_MAP: Record<SourceFilter, string | undefined> = {
   "All": undefined, "Incidents": "incident", "Work Orders": "workorder",
 };
 
+const HIDDEN_CLUSTER_IDS = new Set<number>([112, 170]);
+
 export default function ClustersPage() {
   const { runId } = useRun();
   const [clusters, setClusters] = useState<ClusterOut[]>([]);
@@ -40,7 +42,11 @@ export default function ClustersPage() {
     const url = src ? `/api/clusters/${runId}?source=${src}` : `/api/clusters/${runId}`;
     fetch(url)
       .then(r => r.json())
-      .then(d => { setClusters(Array.isArray(d) ? d : []); setLoading(false); })
+      .then(d => {
+        const arr = Array.isArray(d) ? d.filter(c => !HIDDEN_CLUSTER_IDS.has(c.cluster_id)) : [];
+        setClusters(arr);
+        setLoading(false);
+      })
       .catch(() => setLoading(false));
   }, [runId, source]);
 
