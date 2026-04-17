@@ -99,8 +99,8 @@ def vector_search(query_vec: List[float], run_id: str, top_k: int = 4) -> List[K
 
     return [
         KBSourceOut(
-            title=row[0],
-            category=row[1],
+            title=row[0] or "",
+            category=row[1] or "",
             snippet=(row[2] or "")[:400].strip(),
             is_generated=bool(row[3]),
             similarity=max(0.0, float(row[4])),

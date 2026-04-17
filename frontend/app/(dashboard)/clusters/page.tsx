@@ -26,7 +26,7 @@ const SOURCE_MAP: Record<SourceFilter, string | undefined> = {
   "All": undefined, "Incidents": "incident", "Work Orders": "workorder",
 };
 
-const HIDDEN_CLUSTER_IDS = new Set<number>([112, 170]);
+const HIDDEN_CLUSTER_IDS = new Set<number>([69, 112, 170]);
 
 export default function ClustersPage() {
   const { runId } = useRun();

@@ -56,3 +56,11 @@ class RunOut(BaseModel):
     run_id:     str
     started_at: str
     status:     str
+
+
+class KBArticleUpdate(BaseModel):
+    title:             Optional[str] = None
+    problem_statement: Optional[str] = None
+    symptoms:          Optional[List[str]] = None
+    resolution_steps:  Optional[List[str]] = None
+    additional_notes:  Optional[str] = None

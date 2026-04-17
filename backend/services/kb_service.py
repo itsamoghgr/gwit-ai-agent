@@ -5,13 +5,48 @@ No HTTP concerns — only DB queries and data assembly.
 """
 import json
 from typing import Dict, List, Optional
-from core.database import qdf, scalar
+from sqlalchemy import text
+from core.database import qdf, scalar, get_engine
 from schemas.kb import (
     KBArticleOut, KBArticleStats, KBArticlesResponse,
     ExistingKBOut, ExistingKBStats, ExistingKBResponse,
-    RunOut,
+    RunOut, KBArticleUpdate,
 )
 from core.config import get_settings
+
+
+def update_kb_article(run_id: str, cluster_id: int, patch: KBArticleUpdate) -> bool:
+    """Update editable fields of a generated KB article. Returns True if a row was updated."""
+    fields: List[str] = []
+    params: Dict = {"run_id": run_id, "cluster_id": cluster_id}
+
+    data = patch.model_dump(exclude_none=True)
+    if "title" in data:
+        fields.append("title = :title")
+        params["title"] = data["title"]
+    if "problem_statement" in data:
+        fields.append("problem_statement = :problem_statement")
+        params["problem_statement"] = data["problem_statement"]
+    if "symptoms" in data:
+        fields.append("symptoms = :symptoms")
+        params["symptoms"] = json.dumps(data["symptoms"])
+    if "resolution_steps" in data:
+        fields.append("resolution_steps = CAST(:resolution_steps AS jsonb)")
+        params["resolution_steps"] = json.dumps(data["resolution_steps"])
+    if "additional_notes" in data:
+        fields.append("additional_notes = :additional_notes")
+        params["additional_notes"] = data["additional_notes"]
+
+    if not fields:
+        return False
+
+    sql = (
+        f"UPDATE generated_kb_articles SET {', '.join(fields)} "
+        "WHERE run_id = :run_id AND cluster_id = :cluster_id"
+    )
+    with get_engine().begin() as conn:
+        result = conn.execute(text(sql), params)
+        return result.rowcount > 0
 
 
 def fetch_runs() -> list[RunOut]:

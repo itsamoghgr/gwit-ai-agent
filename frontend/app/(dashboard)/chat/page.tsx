@@ -97,7 +97,6 @@ export default function ChatPage() {
     setMessages(prev => [...prev, { role: "user", content: text, sources: [] }]);
     setInput("");
     setStreaming(true);
-    setMessages(prev => [...prev, { role: "assistant", content: "", sources: [] }]);
 
     try {
       const res = await fetch("/api/chat", {
@@ -110,6 +109,7 @@ export default function ChatPage() {
       const reader  = res.body.getReader();
       const decoder = new TextDecoder();
       let buffer = "", reply = "", sources: KBSource[] = [];
+      let assistantPushed = false;
 
       while (true) {
         const { done, value } = await reader.read();
@@ -126,26 +126,31 @@ export default function ChatPage() {
             if (event.type === "sources") { sources = event.sources; }
             else if (event.type === "token") {
               reply += event.text;
-              setMessages(prev => {
-                const updated = [...prev];
-                updated[updated.length - 1] = { role: "assistant", content: reply, sources };
-                return updated;
-              });
+              if (!assistantPushed) {
+                assistantPushed = true;
+                setMessages(prev => [...prev, { role: "assistant", content: reply, sources }]);
+              } else {
+                setMessages(prev => {
+                  const updated = [...prev];
+                  updated[updated.length - 1] = { role: "assistant", content: reply, sources };
+                  return updated;
+                });
+              }
             }
           } catch { /* skip */ }
         }
       }
-      setMessages(prev => {
-        const updated = [...prev];
-        updated[updated.length - 1] = { role: "assistant", content: reply || "…", sources };
-        return updated;
-      });
+      if (!assistantPushed) {
+        setMessages(prev => [...prev, { role: "assistant", content: reply || "…", sources }]);
+      } else {
+        setMessages(prev => {
+          const updated = [...prev];
+          updated[updated.length - 1] = { role: "assistant", content: reply || "…", sources };
+          return updated;
+        });
+      }
     } catch {
-      setMessages(prev => {
-        const updated = [...prev];
-        updated[updated.length - 1] = { role: "assistant", content: "Sorry, something went wrong. Please try again.", sources: [] };
-        return updated;
-      });
+      setMessages(prev => [...prev, { role: "assistant", content: "Sorry, something went wrong. Please try again.", sources: [] }]);
     } finally {
       setStreaming(false);
     }
@@ -211,7 +216,7 @@ export default function ChatPage() {
 
         {messages.map((msg, i) => <Bubble key={i} msg={msg} />)}
 
-        {streaming && messages[messages.length - 1]?.content === "" && (
+        {streaming && messages[messages.length - 1]?.role === "user" && (
           <div className="flex gap-2.5">
             <div className="w-7 h-7 rounded-full bg-primary flex items-center justify-center flex-shrink-0 text-primary-content text-[11px] font-bold mt-0.5">A</div>
             <div className="bg-base-200 border border-base-300 rounded-xl rounded-tl-sm px-3.5 py-2.5 flex items-center gap-2">
