@@ -4,6 +4,7 @@ export interface Run {
   run_id: string;
   started_at: string;
   status: string;
+  hidden?: boolean;
 }
 
 export interface Cluster {
@@ -119,3 +120,67 @@ export const UTIL_COLORS: Record<string, { fg: string; bg: string }> = {
   "OVER-RELIED":{ fg: "#ef4444", bg: "rgba(239,68,68,0.15)"   },
   PERIPHERAL:   { fg: "#f59e0b", bg: "rgba(245,158,11,0.15)"  },
 };
+
+// ── Run Pipeline types ─────────────────────────────────────────────────────
+
+export type PhaseRunStatus = "pending" | "running" | "complete" | "failed";
+export type JobRunStatus   = "queued" | "running" | "complete" | "partial_failure" | "failed";
+
+export interface PhaseInfo {
+  phase: string;
+  description: string;
+}
+
+export interface PhaseStatus {
+  phase: string;
+  status: PhaseRunStatus;
+  started_at: string | null;
+  finished_at: string | null;
+  duration_s: number | null;
+  error: string | null;
+  stats: Record<string, unknown> | null;
+}
+
+export interface JobStatus {
+  job_id: string;
+  run_id: string;
+  status: JobRunStatus;
+  phases: PhaseStatus[];
+  started_at: string | null;
+  finished_at: string | null;
+  log_tail: string[];
+}
+
+export interface ProgressEvent {
+  type: "progress";
+  phase: string;
+  label: string;
+  sub_phase?: string;
+  current?: number;
+  total?: number;
+  detail?: string;
+  ts?: string;
+}
+
+export type PipelineSSEEvent =
+  | { type: "snapshot"; job: JobStatus }
+  | { type: "job_start"; job_id: string; run_id: string }
+  | { type: "phase_start"; phase: string }
+  | { type: "phase_complete"; phase: string; duration_s: number; stats: Record<string, unknown> | null }
+  | { type: "phase_failed"; phase: string; duration_s: number; error: string }
+  | { type: "log"; line: string }
+  | ProgressEvent
+  | { type: "done"; status: JobRunStatus; failed_phases: string[] }
+  | { type: "error"; message: string };
+
+// Per-phase activity feed entries — both free-form log lines and structured
+// progress events are normalized into this shape inside the pipeline page.
+export interface PhaseActivityEntry {
+  kind: "log" | "progress";
+  ts: string;                 // HH:MM:SS
+  label: string;              // human-readable text
+  sub_phase?: string;
+  current?: number;
+  total?: number;
+  detail?: string;
+}

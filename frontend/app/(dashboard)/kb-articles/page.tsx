@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { useRun } from "@/lib/RunContext";
 import StatCard from "@/components/StatCard";
-import { FileText, ChevronDown, ChevronRight, ShieldCheck, AlertTriangle, Copy, Check, Pencil, X, Save } from "lucide-react";
+import { FileText, ChevronDown, ChevronRight, ShieldCheck, AlertTriangle, Copy, Check, Pencil, X, Save, Zap, Loader2 } from "lucide-react";
 import type { KBArticle } from "@/lib/types";
 
 const HIDDEN_CLUSTER_IDS = new Set<number>([69, 112, 170]);
@@ -380,14 +380,24 @@ export default function KBArticlesPage() {
   const [loading, setLoading] = useState(false);
   const [search, setSearch] = useState("");
   const [expanded, setExpanded] = useState<Set<number>>(new Set());
+  const [embedding, setEmbedding] = useState(false);
+  const [embedResult, setEmbedResult] = useState<{ inserted: number; total: number } | null>(null);
+  const [embedError, setEmbedError] = useState<string | null>(null);
 
   useEffect(() => {
-    if (!runId) return;
+    if (!runId) {
+      setData(null);
+      return;
+    }
     setLoading(true);
-    fetch(`/api/kb-articles/${runId}`)
+    setData(null);
+    setExpanded(new Set());
+    const ctrl = new AbortController();
+    fetch(`/api/kb-articles/${runId}`, { cache: "no-store", signal: ctrl.signal })
       .then(r => r.json())
       .then(d => { setData(d); setLoading(false); })
-      .catch(() => setLoading(false));
+      .catch(err => { if (err?.name !== "AbortError") setLoading(false); });
+    return () => ctrl.abort();
   }, [runId]);
 
   if (!runId) {
@@ -427,11 +437,56 @@ export default function KBArticlesPage() {
     setExpanded(prev => { const n = new Set(prev); n.has(id) ? n.delete(id) : n.add(id); return n; });
   }
 
+  async function handleEmbed() {
+    if (!runId || embedding) return;
+    setEmbedding(true);
+    setEmbedResult(null);
+    setEmbedError(null);
+    try {
+      const res = await fetch(`/api/kb-articles/${runId}/reindex`, { method: "POST" });
+      if (!res.ok) {
+        const body = await res.text().catch(() => "");
+        throw new Error(body || `HTTP ${res.status}`);
+      }
+      const json = await res.json();
+      setEmbedResult({ inserted: json.inserted ?? 0, total: json.total ?? 0 });
+    } catch (err) {
+      setEmbedError(err instanceof Error ? err.message : "Embed failed");
+    } finally {
+      setEmbedding(false);
+    }
+  }
+
   return (
     <div>
-      <div className="mb-6">
-        <h1 className="text-2xl font-bold text-base-content tracking-tight">Generated KB Articles</h1>
-        <p className="text-sm text-base-content/45 mt-0.5">AI-generated knowledge base articles from cluster gap analysis.</p>
+      <div className="mb-6 flex items-start justify-between gap-4">
+        <div>
+          <h1 className="text-2xl font-bold text-base-content tracking-tight">Generated KB Articles</h1>
+          <p className="text-sm text-base-content/45 mt-0.5">AI-generated knowledge base articles from cluster gap analysis.</p>
+        </div>
+        <div className="flex flex-col items-end gap-1">
+          <button
+            className="btn btn-sm btn-primary gap-2"
+            onClick={handleEmbed}
+            disabled={embedding || !runId}
+            title="Rebuild the chat search index for this run's generated articles"
+          >
+            {embedding
+              ? <Loader2 size={14} className="animate-spin" />
+              : <Zap size={14} />}
+            {embedding ? "Embedding…" : "Embed"}
+          </button>
+          {embedResult && !embedError && (
+            <span className="text-[11px] text-success">
+              Indexed {embedResult.inserted} of {embedResult.total}
+            </span>
+          )}
+          {embedError && (
+            <span className="text-[11px] text-error max-w-[220px] truncate" title={embedError}>
+              {embedError}
+            </span>
+          )}
+        </div>
       </div>
 
       {/* KPI strip */}
@@ -473,7 +528,7 @@ export default function KBArticlesPage() {
             const confLabel = typeof a.confidence === "string" && ["HIGH","MEDIUM","LOW"].includes(a.confidence)
               ? a.confidence : null;
             return (
-              <div key={a.cluster_id} className="border border-base-300 rounded-xl overflow-hidden">
+              <div key={`${runId}:${a.cluster_id}`} className="border border-base-300 rounded-xl overflow-hidden">
                 <button
                   className="w-full text-left px-4 py-3 bg-base-100 hover:bg-base-200/50 transition-colors flex items-center gap-3"
                   onClick={() => toggleExpand(a.cluster_id)}

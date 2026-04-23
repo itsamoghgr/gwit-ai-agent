@@ -13,3 +13,8 @@ python-dotenv>=1.0.0
 
 # AI / Azure OpenAI
 openai>=1.30.0
+
+# Pipeline phase ML / numerics (Python 3.9 compatible pins)
+numpy>=1.26,<2.2
+scikit-learn>=1.5,<1.6
+scipy>=1.13,<1.14

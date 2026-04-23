@@ -1,21 +1,27 @@
 "use client";
 
+import { useEffect, useState } from "react";
+import { createPortal } from "react-dom";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { useEffect, useState } from "react";
 import {
-  GitBranch, FileText, BookOpen, MessageSquare,
-  Sun, Moon, ChevronDown, CheckCircle, Clock,
+  GitBranch, FileText, BookOpen, MessageSquare, Play,
+  Sun, Moon, ChevronDown, CheckCircle, Clock, Trash2, Loader2,
+  Settings2, X, EyeOff, Square,
 } from "lucide-react";
 import { useRun } from "@/lib/RunContext";
 import { useTheme } from "@/lib/theme";
+import { cancelPipelineByRunId } from "@/lib/pipeline";
 import type { Run } from "@/lib/types";
 
+const ACTIVE_STATUSES = new Set(["running", "queued"]);
+
 const NAV = [
-  { href: "/clusters",    Icon: GitBranch,    label: "Clusters"    },
-  { href: "/kb-articles", Icon: FileText,     label: "KB Articles" },
-  { href: "/existing-kb", Icon: BookOpen,     label: "Existing KB" },
-  { href: "/chat",        Icon: MessageSquare,label: "AI Chat"     },
+  { href: "/pipeline",    Icon: Play,         label: "Run Pipeline" },
+  { href: "/clusters",    Icon: GitBranch,    label: "Clusters"     },
+  { href: "/kb-articles", Icon: FileText,     label: "KB Articles"  },
+  { href: "/existing-kb", Icon: BookOpen,     label: "Existing KB"  },
+  { href: "/chat",        Icon: MessageSquare,label: "AI Chat"      },
 ];
 
 function formatRunLabel(r: Run) {
@@ -28,26 +34,70 @@ function formatRunLabel(r: Run) {
 }
 
 export default function Sidebar() {
-  const pathname      = usePathname();
-  const { runId, setRunId } = useRun();
-  const { isDark, toggle }  = useTheme();
-  const [runs, setRuns]     = useState<Run[]>([]);
-  const [loaded, setLoaded] = useState(false);
+  const pathname = usePathname();
+  const { runId, setRunId, runs, runsLoaded, deleteRun } = useRun();
+  const { isDark, toggle } = useTheme();
+  const loaded = runsLoaded;
 
+  const selectedRun = runs.find((r: Run) => r.run_id === runId);
+
+  const [manageOpen,  setManageOpen]  = useState(false);
+  const [pendingId,   setPendingId]   = useState<string | null>(null); // inline-confirm row
+  const [deletingId,  setDeletingId]  = useState<string | null>(null);
+  const [stoppingId,  setStoppingId]  = useState<string | null>(null);
+  const [deleteErr,   setDeleteErr]   = useState<string | null>(null);
+  const [allRuns,     setAllRuns]     = useState<Run[] | null>(null);   // includes hidden
+  const [allRunsLoading, setAllRunsLoading] = useState(false);
+
+  // Fetch hidden-inclusive list each time the modal opens so deletions reflect immediately.
   useEffect(() => {
-    fetch("/api/runs")
+    if (!manageOpen) return;
+    let cancelled = false;
+    setAllRunsLoading(true);
+    fetch("/api/runs?include_hidden=1&require_clusters=0", { cache: "no-store" })
       .then(r => r.json())
-      .then((data: Run[]) => {
-        if (!Array.isArray(data)) return;
-        setRuns(data);
-        if (data.length > 0 && !runId) setRunId(data[0].run_id);
-      })
+      .then((data: Run[]) => { if (!cancelled && Array.isArray(data)) setAllRuns(data); })
       .catch(() => {})
-      .finally(() => setLoaded(true));
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+      .finally(() => { if (!cancelled) setAllRunsLoading(false); });
+    return () => { cancelled = true; };
+  }, [manageOpen, runs]);
 
-  const selectedRun = runs.find(r => r.run_id === runId);
+  async function onConfirmDelete(id: string) {
+    setDeletingId(id);
+    setDeleteErr(null);
+    try {
+      await deleteRun(id);
+      setPendingId(null);
+      setAllRuns(prev => prev ? prev.filter(r => r.run_id !== id) : prev);
+    } catch (err) {
+      setDeleteErr(err instanceof Error ? err.message : String(err));
+    } finally {
+      setDeletingId(null);
+    }
+  }
+
+  async function onStopRun(id: string) {
+    setStoppingId(id);
+    setDeleteErr(null);
+    try {
+      await cancelPipelineByRunId(id);
+      // Optimistic local flip so the Trash button appears immediately.
+      setAllRuns(prev =>
+        prev ? prev.map(r => r.run_id === id ? { ...r, status: "cancelled" } : r) : prev,
+      );
+    } catch (err) {
+      setDeleteErr(err instanceof Error ? err.message : String(err));
+    } finally {
+      setStoppingId(null);
+    }
+  }
+
+  function closeManage() {
+    if (deletingId || stoppingId) return;
+    setManageOpen(false);
+    setPendingId(null);
+    setDeleteErr(null);
+  }
 
   return (
     <aside className="w-[220px] min-w-[220px] h-screen sticky top-0 flex flex-col bg-base-100 border-r border-base-300">
@@ -126,6 +176,19 @@ export default function Sidebar() {
             />
           </div>
         )}
+        {loaded && runs.length > 0 && (
+          <button
+            type="button"
+            onClick={() => { setDeleteErr(null); setPendingId(null); setManageOpen(true); }}
+            className="mt-2 w-full flex items-center justify-center gap-1.5 px-2.5 py-1.5
+                       rounded-lg border border-base-300 bg-base-100 text-base-content/60
+                       hover:text-base-content hover:bg-base-200 transition-colors
+                       text-[10.5px] font-medium"
+          >
+            <Settings2 size={11} />
+            Manage runs
+          </button>
+        )}
         {selectedRun && (
           <div className="mt-2 flex items-center gap-1.5">
             {selectedRun.status === "complete"
@@ -154,6 +217,175 @@ export default function Sidebar() {
           }
         </button>
       </div>
+
+      {manageOpen && typeof document !== "undefined" && createPortal(
+        <div
+          className="fixed inset-0 z-[100] flex items-center justify-center bg-black/50 backdrop-blur-sm"
+          onClick={closeManage}
+        >
+          <div
+            role="dialog"
+            aria-modal="true"
+            className="w-[560px] max-w-[94vw] max-h-[80vh] flex flex-col
+                       bg-base-100 border border-base-300 rounded-xl shadow-xl"
+            onClick={e => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between px-5 py-3.5 border-b border-base-300">
+              <div>
+                <h2 className="text-[14px] font-bold text-base-content leading-tight">Manage runs</h2>
+                <p className="text-[11px] text-base-content/50 mt-0.5">
+                  Delete a run to permanently remove all of its data.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={closeManage}
+                disabled={!!deletingId || !!stoppingId}
+                className="w-7 h-7 flex items-center justify-center rounded-lg
+                           text-base-content/50 hover:text-base-content hover:bg-base-200
+                           disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                aria-label="Close"
+              >
+                <X size={14} />
+              </button>
+            </div>
+
+            {deleteErr && (
+              <div className="mx-5 mt-3 p-2.5 rounded-lg bg-error/10 border border-error/30 text-[11px] text-error break-all">
+                {deleteErr}
+              </div>
+            )}
+
+            <ul className="overflow-y-auto px-3 py-3 space-y-1.5">
+              {(allRuns ?? runs).map(r => {
+                const isPending  = pendingId  === r.run_id;
+                const isDeleting = deletingId === r.run_id;
+                const isStopping = stoppingId === r.run_id;
+                const isSelected = runId      === r.run_id;
+                const isHidden   = !!r.hidden;
+                const isActive   = ACTIVE_STATUSES.has(r.status);
+                return (
+                  <li
+                    key={r.run_id}
+                    className={`flex items-center gap-3 px-3 py-2.5 rounded-lg border
+                                ${isPending
+                                  ? "bg-error/5 border-error/30"
+                                  : isHidden
+                                    ? "bg-base-200/40 border-base-300 hover:bg-base-200"
+                                    : "bg-base-100 border-base-300 hover:bg-base-200"}`}
+                  >
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        {r.status === "complete"
+                          ? <CheckCircle size={11} className="text-success shrink-0" />
+                          : <Clock size={11} className="text-warning shrink-0" />}
+                        <span className={`text-[12px] font-semibold ${isHidden ? "text-base-content/65" : "text-base-content"}`}>
+                          {formatRunLabel(r)}
+                        </span>
+                        {isSelected && (
+                          <span className="text-[9px] font-bold uppercase tracking-widest
+                                           text-primary bg-primary/10 border border-primary/20
+                                           rounded px-1.5 py-0.5">
+                            Selected
+                          </span>
+                        )}
+                        {isHidden && (
+                          <span className="text-[9px] font-bold uppercase tracking-widest
+                                           text-base-content/55 bg-base-300/60 border border-base-300
+                                           rounded px-1.5 py-0.5 flex items-center gap-1">
+                            <EyeOff size={9} />
+                            Hidden
+                          </span>
+                        )}
+                      </div>
+                      <p className="text-[10.5px] font-mono text-base-content/45 mt-0.5 truncate">
+                        {r.run_id}
+                      </p>
+                    </div>
+
+                    {isActive ? (
+                      <button
+                        type="button"
+                        onClick={() => onStopRun(r.run_id)}
+                        disabled={isStopping || !!deletingId}
+                        title="Stop this run (current phase will finish first)"
+                        aria-label={`Stop run ${r.run_id}`}
+                        className="shrink-0 flex items-center gap-1 px-2 h-7 rounded-lg
+                                   border border-warning/40 bg-warning/10 text-warning
+                                   hover:bg-warning/20
+                                   disabled:opacity-40 disabled:cursor-not-allowed
+                                   text-[11px] font-semibold transition-colors"
+                      >
+                        {isStopping
+                          ? <><Loader2 size={11} className="animate-spin" />Stopping…</>
+                          : <><Square size={11} />Stop</>}
+                      </button>
+                    ) : isPending ? (
+                      <div className="flex items-center gap-1.5 shrink-0">
+                        <button
+                          type="button"
+                          onClick={() => setPendingId(null)}
+                          disabled={isDeleting}
+                          className="btn btn-xs btn-ghost"
+                        >
+                          Cancel
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => onConfirmDelete(r.run_id)}
+                          disabled={isDeleting}
+                          className="btn btn-xs btn-error"
+                        >
+                          {isDeleting
+                            ? <><Loader2 size={11} className="animate-spin mr-1" />Deleting…</>
+                            : <>Confirm delete</>}
+                        </button>
+                      </div>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={() => { setDeleteErr(null); setPendingId(r.run_id); }}
+                        disabled={!!deletingId || !!stoppingId}
+                        title="Delete this run"
+                        aria-label={`Delete run ${r.run_id}`}
+                        className="shrink-0 w-7 h-7 flex items-center justify-center rounded-lg
+                                   border border-base-300 bg-base-100 text-base-content/50
+                                   hover:text-error hover:border-error/40 hover:bg-error/10
+                                   disabled:opacity-40 disabled:cursor-not-allowed
+                                   transition-colors"
+                      >
+                        <Trash2 size={12} />
+                      </button>
+                    )}
+                  </li>
+                );
+              })}
+              {allRunsLoading && !allRuns && (
+                <li className="px-3 py-6 text-center text-[12px] text-base-content/40 italic">
+                  Loading…
+                </li>
+              )}
+              {!allRunsLoading && (allRuns ?? runs).length === 0 && (
+                <li className="px-3 py-6 text-center text-[12px] text-base-content/40 italic">
+                  No runs to manage.
+                </li>
+              )}
+            </ul>
+
+            <div className="px-5 py-3 border-t border-base-300 flex justify-end">
+              <button
+                type="button"
+                onClick={closeManage}
+                disabled={!!deletingId || !!stoppingId}
+                className="btn btn-sm btn-ghost"
+              >
+                Close
+              </button>
+            </div>
+          </div>
+        </div>,
+        document.body,
+      )}
     </aside>
   );
 }

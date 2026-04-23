@@ -56,6 +56,7 @@ class RunOut(BaseModel):
     run_id:     str
     started_at: str
     status:     str
+    hidden:     bool = False
 
 
 class KBArticleUpdate(BaseModel):

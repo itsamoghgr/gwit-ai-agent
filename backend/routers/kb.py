@@ -25,6 +25,14 @@ def patch_kb_article(run_id: str, cluster_id: int, patch: KBArticleUpdate):
     return {"ok": True}
 
 
+@router.post("/kb-articles/{run_id}/reindex")
+def reindex_kb_articles(run_id: str):
+    """Rebuild kb_search_index entries (source='generated') for this run so
+    the AI Chat retrieval can actually find every generated article. Existing
+    KB rows and the generated_kb_articles table itself are left untouched."""
+    return kb_service.reindex_generated_articles(run_id)
+
+
 @router.get("/existing-kb")
 def get_existing_kb(
     run_id: Optional[str] = Query(default=None, description="Enrich with utilization from this run"),

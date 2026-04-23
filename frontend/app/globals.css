@@ -108,6 +108,42 @@ body {
 
 
 
+/* ── Archie thinking dots ─────────────────────────────────── */
+@keyframes archie-pulse {
+  0%, 80%, 100% { transform: scale(0.6); opacity: 0.35; }
+  40%           { transform: scale(1);   opacity: 1;    }
+}
+.archie-dots {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.archie-dots span {
+  width: 6px;
+  height: 6px;
+  border-radius: 9999px;
+  background: currentColor;
+  animation: archie-pulse 1.2s ease-in-out infinite both;
+}
+.archie-dots span:nth-child(1) { animation-delay: -0.32s; }
+.archie-dots span:nth-child(2) { animation-delay: -0.16s; }
+.archie-dots span:nth-child(3) { animation-delay:  0s;    }
+
+
+/* ── Archie typewriter caret ──────────────────────────────── */
+@keyframes archie-blink {
+  0%, 50%      { opacity: 1; }
+  50.01%, 100% { opacity: 0; }
+}
+.archie-caret {
+  display: inline-block;
+  margin-left: 2px;
+  color: currentColor;
+  opacity: 0.55;
+  animation: archie-blink 1s steps(1) infinite;
+}
+
+
 /* ── Scrollbar polish ─────────────────────────────────────── */
 ::-webkit-scrollbar { width: 6px; height: 6px; }
 ::-webkit-scrollbar-track { background: transparent; }

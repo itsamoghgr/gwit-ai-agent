@@ -4,8 +4,14 @@ Business logic for Generated KB Articles and Existing KB Articles.
 No HTTP concerns — only DB queries and data assembly.
 """
 import json
+import uuid
 from typing import Dict, List, Optional
+
+import psycopg2
+from pgvector.psycopg2 import register_vector
+from psycopg2.extras import execute_values
 from sqlalchemy import text
+
 from core.database import qdf, scalar, get_engine
 from schemas.kb import (
     KBArticleOut, KBArticleStats, KBArticlesResponse,
@@ -49,24 +55,174 @@ def update_kb_article(run_id: str, cluster_id: int, patch: KBArticleUpdate) -> b
         return result.rowcount > 0
 
 
-def fetch_runs() -> list[RunOut]:
-    """Return pipeline runs for the sidebar selector, excluding hidden IDs."""
+def _psycopg2_conn():
+    """Raw psycopg2 connection with pgvector adapters registered — required for
+    reading/writing the `embedding` vector columns outside SQLAlchemy."""
+    url = get_engine().url
+    conn = psycopg2.connect(
+        host=str(url.host),
+        port=url.port or 5432,
+        dbname=str(url.database),
+        user=str(url.username),
+        password=str(url.password),
+    )
+    register_vector(conn)
+    return conn
+
+
+def reindex_generated_articles(run_id: str) -> Dict[str, int]:
+    """Rebuild kb_search_index entries (source='generated') for a run.
+
+    Deletes the run's generated rows from kb_search_index, then re-inserts one
+    row per article that has an article_embedding in generated_kb_articles.
+    Leaves `generated_kb_articles` and `source='existing'` rows untouched.
+    Returns counts so the caller can surface "reindexed N of M articles".
+    """
+    conn = _psycopg2_conn()
+    try:
+        cur = conn.cursor()
+
+        cur.execute(
+            "SELECT COUNT(*) FROM generated_kb_articles WHERE run_id = %s",
+            (run_id,),
+        )
+        total = cur.fetchone()[0]
+
+        cur.execute(
+            "DELETE FROM kb_search_index WHERE run_id = %s AND source = 'generated'",
+            (run_id,),
+        )
+        deleted = cur.rowcount
+
+        cur.execute("""
+            SELECT cluster_id, title, category, problem_statement,
+                   resolution_steps, article_embedding
+            FROM   generated_kb_articles
+            WHERE  run_id = %s AND article_embedding IS NOT NULL
+        """, (run_id,))
+        rows_src = cur.fetchall()
+
+        rows_ins = []
+        for cluster_id, title, category, problem, steps_json, embedding in rows_src:
+            if isinstance(steps_json, str):
+                try:
+                    steps = json.loads(steps_json)
+                except Exception:
+                    steps = []
+            else:
+                steps = steps_json or []
+            steps_flat = " ".join(steps) if isinstance(steps, list) else ""
+            content = f"{problem or ''} {steps_flat}".strip()[:500]
+            rows_ins.append((
+                str(uuid.uuid4()), run_id,
+                "generated", str(cluster_id),
+                str(title or ""),
+                str(category or "Other"),
+                content,
+                embedding,
+                True,
+            ))
+
+        if rows_ins:
+            execute_values(cur, """
+                INSERT INTO kb_search_index
+                    (entry_id, run_id, source, source_id, title, category,
+                     content, embedding, is_generated)
+                VALUES %s
+                ON CONFLICT (source, source_id, run_id) DO UPDATE
+                    SET embedding = EXCLUDED.embedding,
+                        title     = EXCLUDED.title,
+                        content   = EXCLUDED.content,
+                        category  = EXCLUDED.category
+            """, rows_ins, page_size=50)
+
+        conn.commit()
+        return {"total": total, "deleted": deleted, "inserted": len(rows_ins)}
+    finally:
+        conn.close()
+
+
+# Tables that carry a run_id column and should be wiped when a run is deleted.
+# Ordered children-first so FK constraints (e.g. kb_validation_results →
+# generated_kb_articles, pii_findings → generated_kb_articles) are satisfied.
+_RUN_CHILD_TABLES: tuple[str, ...] = (
+    "chat_feedback",
+    "chat_messages",
+    "chat_sessions",
+    "kb_validation_results",
+    "pii_findings",
+    "bias_audit",
+    "generated_kb_articles",
+    "evaluation_results",
+    "coverage_delta",
+    "service_gap_distribution",
+    "gap_analysis",
+    "kb_utilization",
+    "cluster_kb_matches",
+    "cluster_kb_sim",
+    "cluster_assignments",
+    "cluster_sweep",
+    "ticket_coverage",
+    "clusters",
+    "kb_search_index",
+    "ticket_embeddings",
+)
+
+
+def delete_run(run_id: str) -> int:
+    """Delete a pipeline run and all per-run rows. Returns rows deleted from pipeline_runs."""
+    with get_engine().begin() as conn:
+        for tbl in _RUN_CHILD_TABLES:
+            conn.execute(text(f"DELETE FROM {tbl} WHERE run_id = :r"), {"r": run_id})
+        result = conn.execute(
+            text("DELETE FROM pipeline_runs WHERE run_id = :r"), {"r": run_id}
+        )
+        return result.rowcount
+
+
+def fetch_runs(include_hidden: bool = False, require_clusters: bool = True) -> list[RunOut]:
+    """Return pipeline runs for the sidebar selector.
+
+    By default excludes runs in `hidden_run_list`. When `include_hidden=True`,
+    returns every run and sets `hidden=True` on filtered IDs so the UI can flag them.
+    When `require_clusters=False`, returns runs that haven't produced cluster rows yet
+    (so the Manage modal can surface stale / aborted runs for deletion).
+    """
     hidden = get_settings().hidden_run_list
-    df = qdf("""
-        SELECT pr.run_id, pr.started_at, pr.status
-        FROM   pipeline_runs pr
-        INNER JOIN (SELECT DISTINCT run_id FROM clusters) c USING (run_id)
-        WHERE  pr.run_id::text <> ALL(:hidden)
-        ORDER  BY
-            CASE pr.status WHEN 'complete' THEN 0 WHEN 'running' THEN 1 ELSE 2 END,
-            pr.started_at DESC
-        LIMIT 20
-    """, {"hidden": hidden})
+    cluster_join = (
+        "INNER JOIN (SELECT DISTINCT run_id FROM clusters) c USING (run_id)"
+        if require_clusters else ""
+    )
+    if include_hidden:
+        df = qdf(f"""
+            SELECT pr.run_id, pr.started_at, pr.status
+            FROM   pipeline_runs pr
+            {cluster_join}
+            ORDER  BY
+                CASE pr.status WHEN 'complete' THEN 0 WHEN 'running' THEN 1 ELSE 2 END,
+                pr.started_at DESC
+            LIMIT 200
+        """)
+    else:
+        df = qdf(f"""
+            SELECT pr.run_id, pr.started_at, pr.status
+            FROM   pipeline_runs pr
+            {cluster_join}
+            WHERE  pr.run_id::text <> ALL(:hidden)
+            ORDER  BY
+                CASE pr.status WHEN 'complete' THEN 0 WHEN 'running' THEN 1 ELSE 2 END,
+                pr.started_at DESC
+            LIMIT 20
+        """, {"hidden": hidden})
     if df.empty:
         return []
     df["started_at"] = df["started_at"].astype(str)
     df["run_id"]     = df["run_id"].astype(str)
-    return [RunOut(**row) for row in df.to_dict(orient="records")]
+    hidden_set = set(hidden)
+    return [
+        RunOut(**row, hidden=row["run_id"] in hidden_set)
+        for row in df.to_dict(orient="records")
+    ]
 
 
 def fetch_kb_articles(run_id: str) -> KBArticlesResponse:

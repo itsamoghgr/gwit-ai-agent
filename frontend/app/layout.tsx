@@ -13,12 +13,12 @@ export const metadata: Metadata = {
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="en" data-theme="gw-light" className={inter.variable} suppressHydrationWarning>
+    <html lang="en" data-theme="gw-dark" className={inter.variable} suppressHydrationWarning>
       <head>
-        {/* Anti-flash: restore saved theme before React hydrates */}
+        {/* Anti-flash: restore saved theme before React hydrates (default: gw-dark) */}
         <script
           dangerouslySetInnerHTML={{
-            __html: `try{var t=localStorage.getItem('gw-theme');if(t)document.documentElement.setAttribute('data-theme',t);}catch(e){}`,
+            __html: `try{var t=localStorage.getItem('gw-theme')||'gw-dark';document.documentElement.setAttribute('data-theme',t);}catch(e){}`,
           }}
         />
       </head>

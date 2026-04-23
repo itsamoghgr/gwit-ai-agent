@@ -31,7 +31,7 @@ def chat(req: ChatRequest):
         chat_service.stream_reply(
             message=req.message,
             run_id=req.run_id,
-            history=[],   # history management is client-side; extend here for server-side sessions
+            history=[h.model_dump() for h in req.history],
             top_k=req.top_k,
         ),
         media_type="text/event-stream",
